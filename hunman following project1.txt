@@ -1,0 +1,290 @@
+/*
+ * Human Following Robot - Arduino Code
+ * 
+ * This robot uses an ultrasonic sensor to detect and follow a person
+ * Components needed:
+ * - Arduino Uno/Nano
+ * - HC-SR04 Ultrasonic Sensor
+ * - 2x DC Motors with wheels
+ * - L298N Motor Driver
+ * - Servo Motor (optional, for sensor sweeping)
+ * - Battery pack (7.4V recommended)
+ * - Chassis and mounting hardware
+ */
+
+#include <Servo.h>
+
+// Motor pins (L298N driver)
+const int leftMotorPin1 = 2;
+const int leftMotorPin2 = 3;
+const int leftMotorSpeed = 5;  // PWM pin
+
+const int rightMotorPin1 = 4;
+const int rightMotorPin2 = 7;
+const int rightMotorSpeed = 6; // PWM pin
+
+// Ultrasonic sensor pins
+const int trigPin = 8;
+const int echoPin = 9;
+
+// Servo pin (optional - for sensor sweeping)
+const int servoPin = 10;
+Servo sensorServo;
+
+// Robot behavior parameters
+const int followDistance = 30;    // Ideal following distance in cm
+const int minDistance = 15;       // Minimum safe distance in cm
+const int maxDistance = 80;       // Maximum detection distance in cm
+const int motorSpeed = 150;       // Base motor speed (0-255)
+const int turnSpeed = 120;        // Speed when turning
+
+// Variables
+long duration;
+int distance;
+int servoAngle = 90;
+bool personDetected = false;
+unsigned long lastDetectionTime = 0;
+const unsigned long detectionTimeout = 2000; // 2 seconds
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Initialize motor pins
+  pinMode(leftMotorPin1, OUTPUT);
+  pinMode(leftMotorPin2, OUTPUT);
+  pinMode(leftMotorSpeed, OUTPUT);
+  pinMode(rightMotorPin1, OUTPUT);
+  pinMode(rightMotorPin2, OUTPUT);
+  pinMode(rightMotorSpeed, OUTPUT);
+  
+  // Initialize ultrasonic sensor pins
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  
+  // Initialize servo
+  sensorServo.attach(servoPin);
+  sensorServo.write(90); // Center position
+  
+  Serial.println("Human Following Robot Initialized");
+  delay(1000);
+}
+
+void loop() {
+  // Get distance measurement
+  distance = getDistance();
+  
+  // Check if person is detected within range
+  if (distance > 0 && distance <= maxDistance) {
+    personDetected = true;
+    lastDetectionTime = millis();
+    
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+    
+    // Decide robot action based on distance
+    if (distance < minDistance) {
+      // Too close - back up
+      moveBackward();
+      Serial.println("Action: Moving backward (too close)");
+    }
+    else if (distance > followDistance + 10) {
+      // Too far - move forward
+      moveForward();
+      Serial.println("Action: Moving forward (following)");
+    }
+    else {
+      // Perfect distance - stop
+      stopMotors();
+      Serial.println("Action: Staying in position");
+    }
+  }
+  else {
+    // No person detected - search behavior
+    if (millis() - lastDetectionTime > detectionTimeout) {
+      personDetected = false;
+      searchForPerson();
+      Serial.println("Action: Searching for person");
+    }
+    else {
+      stopMotors();
+      Serial.println("Action: Waiting (person lost temporarily)");
+    }
+  }
+  
+  delay(100); // Small delay for stability
+}
+
+// Function to measure distance using ultrasonic sensor
+int getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  duration = pulseIn(echoPin, HIGH);
+  int dist = duration * 0.034 / 2; // Convert to centimeters
+  
+  // Filter out invalid readings
+  if (dist == 0 || dist > 400) {
+    return -1; // Invalid reading
+  }
+  
+  return dist;
+}
+
+// Motor control functions
+void moveForward() {
+  digitalWrite(leftMotorPin1, HIGH);
+  digitalWrite(leftMotorPin2, LOW);
+  analogWrite(leftMotorSpeed, motorSpeed);
+  
+  digitalWrite(rightMotorPin1, HIGH);
+  digitalWrite(rightMotorPin2, LOW);
+  analogWrite(rightMotorSpeed, motorSpeed);
+}
+
+void moveBackward() {
+  digitalWrite(leftMotorPin1, LOW);
+  digitalWrite(leftMotorPin2, HIGH);
+  analogWrite(leftMotorSpeed, motorSpeed);
+  
+  digitalWrite(rightMotorPin1, LOW);
+  digitalWrite(rightMotorPin2, HIGH);
+  analogWrite(rightMotorSpeed, motorSpeed);
+}
+
+void turnLeft() {
+  digitalWrite(leftMotorPin1, LOW);
+  digitalWrite(leftMotorPin2, HIGH);
+  analogWrite(leftMotorSpeed, turnSpeed);
+  
+  digitalWrite(rightMotorPin1, HIGH);
+  digitalWrite(rightMotorPin2, LOW);
+  analogWrite(rightMotorSpeed, turnSpeed);
+}
+
+void turnRight() {
+  digitalWrite(leftMotorPin1, HIGH);
+  digitalWrite(leftMotorPin2, LOW);
+  analogWrite(leftMotorSpeed, turnSpeed);
+  
+  digitalWrite(rightMotorPin1, LOW);
+  digitalWrite(rightMotorPin2, HIGH);
+  analogWrite(rightMotorSpeed, turnSpeed);
+}
+
+void stopMotors() {
+  digitalWrite(leftMotorPin1, LOW);
+  digitalWrite(leftMotorPin2, LOW);
+  analogWrite(leftMotorSpeed, 0);
+  
+  digitalWrite(rightMotorPin1, LOW);
+  digitalWrite(rightMotorPin2, LOW);
+  analogWrite(rightMotorSpeed, 0);
+}
+
+// Search behavior when person is lost
+void searchForPerson() {
+  static unsigned long lastSweepTime = 0;
+  static bool sweepDirection = true; // true = right, false = left
+  
+  if (millis() - lastSweepTime > 500) { // Sweep every 500ms
+    if (sweepDirection) {
+      servoAngle += 30;
+      if (servoAngle >= 150) {
+        servoAngle = 150;
+        sweepDirection = false;
+      }
+    } else {
+      servoAngle -= 30;
+      if (servoAngle <= 30) {
+        servoAngle = 30;
+        sweepDirection = true;
+      }
+    }
+    
+    sensorServo.write(servoAngle);
+    lastSweepTime = millis();
+    
+    // Turn robot slightly in search direction
+    if (sweepDirection) {
+      turnRight();
+      delay(200);
+    } else {
+      turnLeft();
+      delay(200);
+    }
+    stopMotors();
+  }
+}
+
+// Advanced following with obstacle avoidance (optional enhancement)
+void smartFollow() {
+  // Get distances at different angles
+  sensorServo.write(45);  // Look right
+  delay(300);
+  int rightDist = getDistance();
+  
+  sensorServo.write(135); // Look left
+  delay(300);
+  int leftDist = getDistance();
+  
+  sensorServo.write(90);  // Look forward
+  delay(300);
+  int frontDist = getDistance();
+  
+  // Decision making based on multiple sensor readings
+  if (frontDist > minDistance && frontDist < followDistance + 15) {
+    moveForward();
+  }
+  else if (frontDist <= minDistance) {
+    // Obstacle ahead - choose best direction
+    if (rightDist > leftDist && rightDist > minDistance) {
+      turnRight();
+      delay(300);
+    }
+    else if (leftDist > minDistance) {
+      turnLeft();
+      delay(300);
+    }
+    else {
+      moveBackward();
+      delay(300);
+    }
+  }
+  else {
+    // Person too far or lost
+    searchForPerson();
+  }
+}
+
+/*
+ * WIRING GUIDE:
+ * 
+ * L298N Motor Driver:
+ * - IN1 -> Pin 2
+ * - IN2 -> Pin 3  
+ * - ENA -> Pin 5 (PWM)
+ * - IN3 -> Pin 4
+ * - IN4 -> Pin 7
+ * - ENB -> Pin 6 (PWM)
+ * - VCC -> 5V
+ * - GND -> GND
+ * 
+ * HC-SR04 Ultrasonic Sensor:
+ * - VCC -> 5V
+ * - Trig -> Pin 8
+ * - Echo -> Pin 9
+ * - GND -> GND
+ * 
+ * Servo Motor:
+ * - Red -> 5V
+ * - Brown/Black -> GND
+ * - Orange/Yellow -> Pin 10
+ * 
+ * Power Supply:
+ * - Use 7.4V Li-Po battery for motors
+ * - Arduino can be powered via USB or Vin pin
+ */
